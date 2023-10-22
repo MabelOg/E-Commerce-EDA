@@ -242,7 +242,7 @@ plt.show()
 
 
 ###############################################################################
-#                                5. PROBLEM STATEMENT ANALYZE              #
+#                                5. FURTHER ANALYSIS             #
 ###############################################################################
 
 # Calculate the number of orders for each product category
