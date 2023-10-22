@@ -1,0 +1,276 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.stats import pearsonr
+import seaborn as sns
+
+
+###############################################################################
+#                      ACCESS AND LOAD THE CSV FILE                    #
+###############################################################################
+
+#Access the diffetents dataset file
+cust = 'olist_customers_dataset.csv'
+order_items = 'olist_order_items_dataset.csv'
+order_pay = 'olist_order_payments_dataset.csv'
+order_rev = 'olist_order_reviews_dataset.csv'
+order = 'olist_orders_dataset.csv'
+prod = 'olist_products_dataset.csv'
+sellers = 'olist_sellers_dataset.csv'
+trans = 'product_category_name_translation.csv'
+
+# Load each CSV file into separate DataFrames
+cust_df = pd.read_csv('olist_customers_dataset.csv')
+order_items_df = pd.read_csv('olist_order_items_dataset.csv')
+order_pay_df = pd.read_csv('olist_order_payments_dataset.csv')
+order_rev_df = pd.read_csv('olist_order_reviews_dataset.csv')
+order_df = pd.read_csv('olist_orders_dataset.csv')
+prod_df = pd.read_csv('olist_products_dataset.csv')
+sellers_df = pd.read_csv('olist_sellers_dataset.csv')
+trans_df = pd.read_csv('product_category_name_translation.csv')
+
+###############################################################################
+#                     2. MERGE THE DATA                                     #
+###############################################################################
+
+data = pd.merge(cust_df,order_df, on='customer_id', how='inner')
+data = data.merge(order_items_df, on='order_id', how='inner')
+data = data.merge(order_pay_df, on='order_id', how='inner')
+data = data.merge(order_rev_df, on='order_id', how='inner')
+data = data.merge(prod_df, on='product_id', how='inner')
+data = data.merge(sellers_df, on='seller_id', how='inner')
+data = data.merge(trans_df, on='product_category_name', how='inner')
+data
+
+
+###############################################################################
+#                     3.  CLEANING THE DATA                          #
+###############################################################################
+
+#Assessing the quality of our data and identifying columns with missing value
+data.isnull().sum()
+# Dropping columns with large number of missing values that are not relevant to our analysis:
+data.drop(['review_comment_title', 'review_comment_message','review_creation_date','review_answer_timestamp',
+           'product_name_lenght','product_description_lenght', 'product_photos_qty','product_weight_g',
+           'product_length_cm','product_height_cm','product_width_cm','product_category_name','payment_sequential'],axis=1,inplace=True)
+
+#Let's rename the product name  English column to product name
+data.rename(columns={'product_category_name_english': 'product_category'}, inplace=True)
+
+
+#Handling missing Values
+# Dropping the rows with missing values
+data.isnull().sum()
+data.dropna(subset= ['order_approved_at', 'order_delivered_carrier_date', 'order_delivered_customer_date'], inplace=True)
+data.reset_index(inplace= True, drop= True)
+
+# Checking again to confirm the missing values were dropped successfully
+data.isna().sum()
+data.count() #To see the number of dataset after dropping the missing values rows
+
+# Check and drop duplicate row
+duplicates = data[data.duplicated()]
+duplicates = len(duplicates)
+duplicates
+data = data.drop_duplicates()
+
+#Checking for duplicate columns
+duplicate_col = data.columns[data.columns.duplicated()]
+duplicate_col = len(duplicate_col)
+duplicate_col  #No duplicate columns found
+
+#Convert timestamp columns to datetime objects
+data['order_purchase_timestamp'] = pd.to_datetime(data['order_purchase_timestamp'])
+data['order_approved_at'] = pd.to_datetime(data['order_approved_at'])
+data['order_delivered_carrier_date'] = pd.to_datetime(data['order_delivered_carrier_date'])
+data['shipping_limit_date'] = pd.to_datetime(data['shipping_limit_date'])
+data['order_delivered_customer_date'] = pd.to_datetime(data['order_delivered_customer_date'])
+data['order_estimated_delivery_date'] = pd.to_datetime(data['order_estimated_delivery_date'])
+
+
+data['order_purchase_timestamp'] = data['order_purchase_timestamp'].dt.date
+data['order_approved_at'] = data['order_approved_at'].dt.date
+data['order_delivered_carrier_date'] = data['order_delivered_carrier_date'].dt.date
+data['shipping_limit_date'] = data['shipping_limit_date'].dt.date
+data['order_delivered_customer_date'] = data['order_delivered_customer_date'].dt.date
+data['order_estimated_delivery_date'] = data['order_estimated_delivery_date'].dt.date
+
+# To ensure the chronological order of events, we want to verify if
+# 'order_purchase_timestamp' precedes 'order_estimated_delivery_date' in our dataset.
+
+# Check if 'order_purchase_timestamp' is before 'order_estimated_delivery_date'
+data['purchase_before_estimated'] = data['order_purchase_timestamp'] > data['order_estimated_delivery_date']
+# You can now use this new column to filter the rows where 'order_purchase_timestamp' is before 'order_estimated_delivery_date'
+result = data[data['purchase_before_estimated']]
+print(result)
+
+# Check to see our data types are correct
+data.info()
+
+# Reorganize the columns
+data.columns
+order_column = ['customer_id', 'customer_unique_id','customer_state','customer_city', 'customer_zip_code_prefix',
+                'order_id', 'product_id', 'product_category', 'order_item_id', 'order_status', 'price',
+                'freight_value', 'order_purchase_timestamp', 'order_approved_at', 'order_delivered_carrier_date',
+                'shipping_limit_date', 'order_delivered_customer_date','order_estimated_delivery_date', 'payment_type',
+                'payment_installments', 'payment_value', 'review_id', 'review_score', 'seller_id', 'seller_state',
+                'seller_city', 'seller_zip_code_prefix']
+data.reset_index(inplace= True, drop= True)
+data = data[order_column]
+
+
+# Group and aggregate data by 'order_id' and 'product_id' while retaining unique 'product_id' values
+# and summarizing other information for duplicate rows
+aggregated_orders = data.groupby(['order_id', 'product_id']).agg({
+    'customer_id': 'first',
+    'customer_unique_id': 'first',
+    'customer_state': 'first',
+    'customer_city': 'first',
+    'customer_zip_code_prefix': 'first',
+    'product_category': 'first',
+    'order_item_id': 'max',  # Keep the maximum order_item_id to retain unique product_id
+    'order_status': 'first',
+    'price': 'sum',
+    'freight_value': 'sum',
+    'order_purchase_timestamp': 'first',
+    'order_approved_at': 'first',
+    'order_delivered_carrier_date': 'first',
+    'shipping_limit_date': 'first',
+    'order_delivered_customer_date': 'first',
+    'order_estimated_delivery_date': 'first',
+    'payment_type': 'first',
+    'payment_installments': 'first',
+    'payment_value': 'sum',
+    'review_id': 'first',
+    'review_score': 'first',
+    'seller_id': 'first',
+    'seller_state': 'first',
+    'seller_city': 'first',
+    'seller_zip_code_prefix': 'first',
+}).reset_index()
+data = aggregated_orders
+
+#Create new csv file of clean data
+data.to_csv('merged_data.csv', index=False)
+
+
+###############################################################################
+#                                4. DATA ANALYZE                              #
+###############################################################################
+
+## Is the company's order fulfillment process efficient? And how much does delivery time vary?
+
+# Calculate days between order and delivery by subtracting the order purchase timestamp from the delivery timestamp
+data['delivery_days'] = (data['order_delivered_customer_date'] - data['order_purchase_timestamp']).dt.days
+data
+# Calculate average days between order and delivery
+average_delivery_time = data['delivery_days'].mean()
+
+# Calculate maximum and minimum delivery times
+min_delivery_time = data['delivery_days'].min()
+max_delivery_time = data['delivery_days'].max()
+
+# Print results
+print('The average delivery time:', round(average_delivery_time), 'days')
+print('Minimum delivery time:', round(min_delivery_time), 'days')
+print('Maximum delivery time:', round(max_delivery_time), 'days')
+
+
+
+# Calculate the maximum delivery days for each customer and seller states
+customer_state_delivery_counts = data.groupby('customer_state')['delivery_days'].max().reset_index()
+seller_state_delivery_counts = data.groupby('seller_state')['delivery_days'].max().reset_index()
+# Find the state with the highest delivery days for both customer and seller states
+state_with_highest_customer_delivery = customer_state_delivery_counts.loc[customer_state_delivery_counts['delivery_days'].idxmax()]
+state_with_highest_seller_delivery = seller_state_delivery_counts.loc[seller_state_delivery_counts['delivery_days'].idxmax()]
+print("State with the highest customer delivery days:")
+print(state_with_highest_customer_delivery)
+print("\nState with the highest seller delivery days:")
+print(state_with_highest_seller_delivery)
+
+
+
+# Products with the most order
+order_delivery = data.groupby('product_category')['order_id'].count().reset_index()
+order_with_highest_deliveries = order_delivery.loc[order_delivery['order_id'].idxmax()]
+print(order_with_highest_deliveries)
+
+# State with the most order
+order_state_counts = data.groupby('customer_state')['order_id'].count().reset_index()
+order_with_most_deliveries = order_state_counts.loc[order_state_counts['order_id'].idxmax()]
+print(order_with_most_deliveries)
+
+
+# Calculate the average review score for each product category
+average_review_scores = data.groupby('product_category')['review_score'].mean().reset_index()
+# Sort the categories by average review score in ascending order
+average_review_scores = average_review_scores.sort_values(by='review_score')
+# Print or display the results
+average_review_scores
+
+# Correlation between delivery time and reviews
+correlation_matrix = data[['review_score','delivery_days','price']].corr()
+correlation_matrix
+
+
+
+# Product category  with respective delivery time
+# Calculate average delivery days by product category
+average_delivery_days = data.groupby('product_category')['delivery_days'].mean().reset_index()
+average_delivery_days
+
+# Calculate the Pearson correlation coefficient and check for significance between late delivery and review_score
+corr_coeff = pearsonr(data['delivery_days'], data['review_score'])
+print("Correlation Coefficient:", corr_coeff)
+
+# Let's see what that looks like on a plot
+plt.figure(figsize=(10, 6))
+plt.scatter(data['delivery_days'], data['review_score'], alpha=0.5)
+# Add labels to the x-axis and y-axis
+plt.xlabel('Delivery Days')
+plt.ylabel('Review Score')
+# Calculate the linear regression line
+z = np.polyfit(data['delivery_days'], data['review_score'], 1)
+p = np.poly1d(z)
+# Adding trendline to the plot
+plt.plot(data['delivery_days'], p(data['delivery_days']), "r--")
+# Plot title
+plt.title('Delivery Days vs. Review Score with Trendline')
+plt.grid(True)
+plt.show()
+
+
+
+###############################################################################
+#                                5. PROBLEM STATEMENT ANALYZE              #
+###############################################################################
+
+# Calculate the number of orders for each product category
+demand_per_product = data['product_category'].value_counts().nlargest(10)
+print(demand_per_product)
+
+data_top_10 = data[data['product_category'].isin(demand_per_product.index)]
+print(data_top_10)
+
+# Calculate average price for each product category
+avg_price_per_product = data_top_10.groupby('product_category')['price'].mean()
+
+# Calculate price adjustment based on the demand
+def adjust_price(avg_price, demand):
+    return avg_price * (1 + (demand - demand.mean()) / demand.mean())
+
+# Adjust prices based on demand
+adjusted_prices = adjust_price(avg_price_per_product, demand_per_product)
+print(avg_price_per_product,adjusted_prices)
+
+# Plotting original and adjusted prices for the top 10 product category
+plt.figure(figsize=(12, 6))
+plt.bar(avg_price_per_product.index, avg_price_per_product, label='Average Price')
+plt.bar(adjusted_prices.index, adjusted_prices, label='Adjusted Price')
+plt.xlabel('Product Category')
+plt.ylabel('Price')
+plt.xticks(rotation=45)
+plt.legend()
+plt.title('Average Price vs Adjusted Price for Product Category (by demand)')
+plt.tight_layout()
+plt.show()
